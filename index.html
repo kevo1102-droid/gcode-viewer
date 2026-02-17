@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1a1a2e">
+  <title>G-Code 3D Viewer</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>G-Code 3D Viewer</h1>
+      <div class="legend">
+        <span class="legend-item legend-rapid">Rapid</span>
+        <span class="legend-item legend-cut">Cut</span>
+      </div>
+    </header>
+
+    <div class="controls">
+      <input type="file" id="file-input" class="file-input-btn">
+      <button class="btn toggle-paste" onclick="document.querySelector('.paste-section').classList.toggle('collapsed')">Paste</button>
+      <button class="btn" id="reset-view">Reset View</button>
+    </div>
+
+    <div class="paste-section collapsed">
+      <textarea id="paste-area" placeholder="Paste G-code here..."></textarea>
+      <div style="padding: 0 0 8px;">
+        <button class="btn btn-primary" id="parse-btn">Render</button>
+      </div>
+    </div>
+
+    <div id="viewer-container">
+      <div id="drop-zone"></div>
+      <div id="status-msg" class="status-msg"></div>
+    </div>
+
+    <!-- Playback controls -->
+    <div id="playback-bar" class="hidden">
+      <div class="playback-controls">
+        <button class="btn btn-play btn-primary" id="play-btn">Play</button>
+        <button class="btn btn-sm" id="restart-btn">Restart</button>
+        <button class="btn btn-sm" id="show-all-btn">Show All</button>
+        <div class="speed-control">
+          <label>Speed</label>
+          <input type="range" id="speed-slider" min="0" max="100" value="50">
+          <span id="speed-label">1x</span>
+        </div>
+      </div>
+      <div class="progress-row">
+        <div id="progress-bar" class="progress-bar">
+          <div id="progress-fill" class="progress-fill"></div>
+        </div>
+        <span id="progress-text" class="progress-text">0 / 0</span>
+      </div>
+    </div>
+
+    <div id="stats-panel" class="hidden">
+      <span id="file-name"></span>
+      <span class="stat">Lines: <span id="stat-lines">-</span></span>
+      <span class="stat">Moves: <span id="stat-moves">-</span></span>
+      <span class="stat">Size: <span id="stat-bounds">-</span></span>
+    </div>
+  </div>
+
+  <!-- Three.js (local) -->
+  <script src="/lib/three.min.js"></script>
+  <script src="/lib/OrbitControls.js"></script>
+
+  <!-- App modules -->
+  <script src="/js/gcode-parser.js?v=4"></script>
+  <script src="/js/viewer.js?v=4"></script>
+  <script src="/js/app.js?v=4"></script>
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(regs => {
+        regs.forEach(r => r.unregister());
+      });
+    }
+
+    if (typeof THREE === 'undefined') {
+      document.getElementById('viewer-container').innerHTML =
+        '<div style="color:red;padding:20px;">Three.js failed to load from CDN. Check internet connection.</div>';
+    }
+  </script>
+</body>
+</html>

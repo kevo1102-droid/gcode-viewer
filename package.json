@@ -1,0 +1,9 @@
+{
+  "name": "gcode-viewer",
+  "version": "1.0.0",
+  "description": "Offline 3D G-code toolpath viewer PWA",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
