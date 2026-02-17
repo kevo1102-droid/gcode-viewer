@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#1a1a2e">
   <title>G-Code 3D Viewer</title>
-  <link rel="manifest" href="/manifest.json">
-  <link rel="stylesheet" href="/css/style.css">
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <div id="app">
@@ -65,13 +65,13 @@
   </div>
 
   <!-- Three.js (local) -->
-  <script src="/lib/three.min.js"></script>
-  <script src="/lib/OrbitControls.js"></script>
+  <script src="lib/three.min.js"></script>
+  <script src="lib/OrbitControls.js"></script>
 
   <!-- App modules -->
-  <script src="/js/gcode-parser.js?v=4"></script>
-  <script src="/js/viewer.js?v=4"></script>
-  <script src="/js/app.js?v=4"></script>
+  <script src="js/gcode-parser.js?v=5"></script>
+  <script src="js/viewer.js?v=5"></script>
+  <script src="js/app.js?v=5"></script>
 
   <script>
     if ('serviceWorker' in navigator) {
@@ -82,7 +82,7 @@
 
     if (typeof THREE === 'undefined') {
       document.getElementById('viewer-container').innerHTML =
-        '<div style="color:red;padding:20px;">Three.js failed to load from CDN. Check internet connection.</div>';
+        '<div style="color:red;padding:20px;">Three.js failed to load. Try refreshing the page.</div>';
     }
   </script>
 </body>
