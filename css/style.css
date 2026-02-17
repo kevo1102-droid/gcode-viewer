@@ -359,6 +359,56 @@ header h1 {
   text-align: right;
 }
 
+/* Info panel */
+#info-panel {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+  flex-shrink: 0;
+  z-index: 10;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+#info-panel.hidden {
+  display: none;
+}
+
+.info-section {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(42, 42, 74, 0.5);
+}
+
+.info-section:last-child {
+  border-bottom: none;
+}
+
+.info-label {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  min-width: 70px;
+  flex-shrink: 0;
+}
+
+.tool-item {
+  padding: 2px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.toggle-info {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
 /* Responsive */
 @media (max-width: 480px) {
   header h1 { font-size: 14px; }

@@ -61,6 +61,28 @@
       <span class="stat">Lines: <span id="stat-lines">-</span></span>
       <span class="stat">Moves: <span id="stat-moves">-</span></span>
       <span class="stat">Size: <span id="stat-bounds">-</span></span>
+      <span class="stat" id="stat-cycle" style="display:none">Cycle: <span id="stat-cycle-time">-</span></span>
+      <button class="btn btn-sm toggle-info" id="info-toggle" style="display:none">Info</button>
+    </div>
+
+    <!-- Info drawer for tool list, material, cycle time breakdown -->
+    <div id="info-panel" class="hidden">
+      <div class="info-section" id="info-material" style="display:none">
+        <span class="info-label">Material</span>
+        <span id="info-material-text"></span>
+      </div>
+      <div class="info-section" id="info-sheet" style="display:none">
+        <span class="info-label">Sheet</span>
+        <span id="info-sheet-text"></span>
+      </div>
+      <div class="info-section" id="info-cycle">
+        <span class="info-label">Cycle Time</span>
+        <span id="info-cycle-detail"></span>
+      </div>
+      <div class="info-section" id="info-tools">
+        <span class="info-label">Tools</span>
+        <div id="info-tool-list"></div>
+      </div>
     </div>
   </div>
 
@@ -69,9 +91,9 @@
   <script src="lib/OrbitControls.js"></script>
 
   <!-- App modules -->
-  <script src="js/gcode-parser.js?v=5"></script>
-  <script src="js/viewer.js?v=5"></script>
-  <script src="js/app.js?v=5"></script>
+  <script src="js/gcode-parser.js?v=6"></script>
+  <script src="js/viewer.js?v=6"></script>
+  <script src="js/app.js?v=6"></script>
 
   <script>
     if ('serviceWorker' in navigator) {

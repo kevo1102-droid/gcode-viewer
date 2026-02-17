@@ -78,6 +78,10 @@ class GCodeViewer {
     this.toolMarker.visible = false;
     this.scene.add(this.toolMarker);
 
+    // Sheet outline group
+    this.sheetGroup = new THREE.Group();
+    this.scene.add(this.sheetGroup);
+
     window.addEventListener('resize', () => this.onResize());
 
     this.animate();
@@ -400,6 +404,66 @@ class GCodeViewer {
     this.camera.near = dist * 0.001;
     this.camera.far = dist * 100;
     this.camera.updateProjectionMatrix();
+  }
+
+  showSheet(sheet) {
+    // Clear previous sheet outline
+    while (this.sheetGroup.children.length) {
+      const child = this.sheetGroup.children[0];
+      child.geometry?.dispose();
+      child.material?.dispose();
+      this.sheetGroup.remove(child);
+    }
+
+    if (!sheet || !sheet.width || !sheet.length) return;
+
+    const w = sheet.length; // X axis (length along table)
+    const h = sheet.width;  // Y axis
+
+    // Translucent filled plane
+    const planeGeom = new THREE.PlaneGeometry(w, h);
+    const planeMat = new THREE.MeshBasicMaterial({
+      color: 0x4488ff,
+      transparent: true,
+      opacity: 0.06,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    const plane = new THREE.Mesh(planeGeom, planeMat);
+    plane.position.set(w / 2, h / 2, 0);
+    this.sheetGroup.add(plane);
+
+    // Outline border
+    const pts = [
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(w, 0, 0),
+      new THREE.Vector3(w, h, 0),
+      new THREE.Vector3(0, h, 0),
+      new THREE.Vector3(0, 0, 0)
+    ];
+    const lineGeom = new THREE.BufferGeometry().setFromPoints(pts);
+    const lineMat = new THREE.LineBasicMaterial({
+      color: 0x4488ff,
+      transparent: true,
+      opacity: 0.5
+    });
+    const outline = new THREE.Line(lineGeom, lineMat);
+    this.sheetGroup.add(outline);
+
+    // Dimension labels at edges (small tick marks)
+    const tickSize = Math.max(w, h) * 0.015;
+    const tickPts = [
+      // X-axis ticks at corners
+      new THREE.Vector3(0, -tickSize, 0), new THREE.Vector3(0, tickSize, 0),
+      new THREE.Vector3(w, -tickSize, 0), new THREE.Vector3(w, tickSize, 0),
+      // Y-axis ticks at corners
+      new THREE.Vector3(-tickSize, 0, 0), new THREE.Vector3(tickSize, 0, 0),
+      new THREE.Vector3(-tickSize, h, 0), new THREE.Vector3(tickSize, h, 0)
+    ];
+    const tickGeom = new THREE.BufferGeometry().setFromPoints(tickPts);
+    const tickMat = new THREE.LineBasicMaterial({ color: 0x4488ff, opacity: 0.4, transparent: true });
+    const ticks = new THREE.LineSegments(tickGeom, tickMat);
+    this.sheetGroup.add(ticks);
   }
 
   resetView() {

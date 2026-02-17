@@ -1,7 +1,8 @@
 /**
  * G-Code Parser
  * Parses G-code into toolpath segments for 3D visualization.
- * Handles Fanuc-style and LinuxCNC dialects.
+ * Extracts tool info, sheet dimensions, and calculates cycle time.
+ * Handles Fanuc-style, LinuxCNC, and Cabinet Vision .anc files.
  */
 
 class GCodeParser {
@@ -14,7 +15,7 @@ class GCodeParser {
     this.y = 0;
     this.z = 0;
     this.feedRate = 0;
-    this.absoluteMode = true; // G90 default
+    this.absoluteMode = true;
     this.segments = [];
     this.bounds = {
       min: { x: Infinity, y: Infinity, z: Infinity },
@@ -23,6 +24,26 @@ class GCodeParser {
     this.lineCount = 0;
     this.moveCount = 0;
     this._programEnded = false;
+    this._lastMoveType = null;
+
+    // Metadata extracted from comments
+    this.sheet = { width: null, length: null, thickness: null };
+    this.material = null;
+    this.jobName = null;
+    this.outputDate = null;
+
+    // Tool tracking
+    this.tools = {};       // keyed by tool number
+    this.currentTool = null;
+    this.currentSpindleSpeed = 0;
+
+    // Cycle time tracking
+    this.totalCutDist = 0;
+    this.totalRapidDist = 0;
+    this.feedSegments = []; // { dist, feed } for weighted time calc
+    this.rapidRate = 400;   // typical CNC router rapid rate in IPM
+    this.toolChangeTime = 8; // seconds per tool change
+    this.toolChangeCount = 0;
   }
 
   parse(gcodeText) {
@@ -30,12 +51,16 @@ class GCodeParser {
     const lines = gcodeText.split('\n');
     this.lineCount = lines.length;
 
+    // First pass: extract metadata from comments
+    for (let i = 0; i < lines.length; i++) {
+      this.parseComments(lines[i]);
+    }
+
+    // Second pass: parse moves
     for (let i = 0; i < lines.length; i++) {
       this.parseLine(lines[i], i + 1);
     }
 
-    // Post-process: remove trailing rapids that go far outside the cut envelope
-    // (machine park moves at end of CV programs)
     this.trimParkMoves();
 
     return {
@@ -45,21 +70,70 @@ class GCodeParser {
         lineCount: this.lineCount,
         moveCount: this.segments.length,
         bounds: this.bounds
-      }
+      },
+      sheet: this.sheet,
+      material: this.material,
+      jobName: this.jobName,
+      tools: this.tools,
+      cycleTime: this.calculateCycleTime()
     };
+  }
+
+  parseComments(rawLine) {
+    // Extract content inside parentheses
+    const comments = [];
+    const regex = /\(([^)]*)\)/g;
+    let match;
+    while ((match = regex.exec(rawLine)) !== null) {
+      comments.push(match[1].trim());
+    }
+
+    for (const c of comments) {
+      // Tool definitions: TOOL:2, OFFSET:2, TNM:2 - 1/2 DOWN SHEER, TD:0.4975
+      const toolMatch = c.match(/TOOL\s*:\s*(\d+).*?TNM\s*:\s*\d+\s*-\s*(.+?),\s*TD\s*:\s*([\d.]+)/i);
+      if (toolMatch) {
+        const num = parseInt(toolMatch[1]);
+        this.tools[num] = this.tools[num] || {};
+        this.tools[num].number = num;
+        this.tools[num].name = toolMatch[2].trim();
+        this.tools[num].diameter = parseFloat(toolMatch[3]);
+        continue;
+      }
+
+      // Sheet dimensions
+      const widthMatch = c.match(/Sheet Width.*?:\s*([\d.]+)/i);
+      if (widthMatch) { this.sheet.width = parseFloat(widthMatch[1]); continue; }
+
+      const lengthMatch = c.match(/Sheet Length.*?:\s*([\d.]+)/i);
+      if (lengthMatch) { this.sheet.length = parseFloat(lengthMatch[1]); continue; }
+
+      const thickMatch = c.match(/Sheet Thickness.*?:\s*([\d.]+)/i);
+      if (thickMatch) { this.sheet.thickness = parseFloat(thickMatch[1]); continue; }
+
+      // Material
+      const matMatch = c.match(/Material name\s*:\s*(.+)/i);
+      if (matMatch) { this.material = matMatch[1].trim(); continue; }
+
+      // Job name
+      const jobMatch = c.match(/JOB_NAME\s*:\s*(.+)/i);
+      if (jobMatch) { this.jobName = jobMatch[1].trim(); continue; }
+
+      // Output date
+      const dateMatch = c.match(/Output ON\s+(.+?)\s+from/i);
+      if (dateMatch) { this.outputDate = dateMatch[1].trim(); continue; }
+    }
   }
 
   parseLine(line, lineNumber) {
     if (this._programEnded) return;
 
-    // Strip comments: anything after ; or inside ()
+    // Strip comments but we already parsed them
     line = line.replace(/;.*$/, '').replace(/\(.*?\)/g, '').trim().toUpperCase();
     if (!line || line.startsWith('%') || line.startsWith('O')) return;
 
     const words = this.tokenize(line);
     if (!words.length) return;
 
-    // Extract G, M codes and parameters
     let gCodes = [];
     let params = {};
 
@@ -69,7 +143,26 @@ class GCodeParser {
       if (letter === 'G') {
         gCodes.push(value);
       } else if (letter === 'N') {
-        // Line number — skip
+        // Line number
+      } else if (letter === 'M') {
+        // Handle M codes for tool tracking
+        if (value === 6) {
+          // Tool change — tool number comes from T param
+        } else if (value === 3 || value === 4) {
+          // Spindle on — speed from S param
+        }
+        params[letter] = value;
+      } else if (letter === 'T') {
+        // Tool change
+        const toolNum = Math.floor(value);
+        this.currentTool = toolNum;
+        this.tools[toolNum] = this.tools[toolNum] || { number: toolNum, name: 'Tool ' + toolNum };
+        this.toolChangeCount++;
+      } else if (letter === 'S') {
+        this.currentSpindleSpeed = value;
+        if (this.currentTool && this.tools[this.currentTool]) {
+          this.tools[this.currentTool].spindleSpeed = value;
+        }
       } else {
         params[letter] = value;
       }
@@ -80,24 +173,25 @@ class GCodeParser {
       switch (g) {
         case 90: this.absoluteMode = true; break;
         case 91: this.absoluteMode = false; break;
-        case 20: break; // Inches
-        case 21: break; // Millimeters
-        case 28: return; // Machine home — no visible move
-        case 30: return; // Program end
-        case 399: return; // Custom cycle (CV sweep)
-        case 40: break; // Cutter comp cancel
-        case 42: break; // Cutter comp right
-        case 43: break; // Tool length offset
-        case 49: break; // Tool length offset cancel
-        case 80: break; // Canned cycle cancel
-        case 17: break; // XY plane
-        case 18: break; // XZ plane
-        case 19: break; // YZ plane
-        case 55: break; // Work coordinate system
+        case 20: break;
+        case 21: break;
+        case 28: return;
+        case 30: return;
+        case 399: return;
+        case 40: break;
+        case 41: break;
+        case 42: break;
+        case 43: break;
+        case 49: break;
+        case 80: break;
+        case 17: break;
+        case 18: break;
+        case 19: break;
+        case 54: case 55: case 56: case 57: case 58: case 59: break;
       }
     }
 
-    // Determine move type from G codes
+    // Determine move type
     let moveType = null;
     for (const g of gCodes) {
       if (g === 0) moveType = 'rapid';
@@ -106,7 +200,6 @@ class GCodeParser {
       else if (g === 3) moveType = 'ccw_arc';
     }
 
-    // If no explicit G code but has coordinates, treat as linear move (modal behavior)
     if (moveType === null && ('X' in params || 'Y' in params || 'Z' in params)) {
       moveType = this._lastMoveType || 'cut';
     }
@@ -122,7 +215,6 @@ class GCodeParser {
 
     if ('F' in params) this.feedRate = params.F;
 
-    // M30/M02 = program end — stop parsing to skip park/home moves
     for (const word of words) {
       if (word === 'M30' || word === 'M02') this._programEnded = true;
     }
@@ -153,8 +245,19 @@ class GCodeParser {
       if ('Z' in params) this.z += params.Z;
     }
 
-    // Skip zero-length moves
     if (startX === this.x && startY === this.y && startZ === this.z) return;
+
+    const dist = Math.sqrt(
+      (this.x - startX) ** 2 + (this.y - startY) ** 2 + (this.z - startZ) ** 2
+    );
+
+    // Track distances for cycle time
+    if (type === 'rapid') {
+      this.totalRapidDist += dist;
+    } else {
+      this.totalCutDist += dist;
+      this.feedSegments.push({ dist, feed: this.feedRate || 100 });
+    }
 
     this.updateBounds(this.x, this.y, this.z);
     this.moveCount++;
@@ -163,6 +266,7 @@ class GCodeParser {
       type: type,
       from: { x: startX, y: startY, z: startZ },
       to: { x: this.x, y: this.y, z: this.z },
+      tool: this.currentTool,
       line: lineNumber
     });
   }
@@ -176,7 +280,6 @@ class GCodeParser {
     const endY = this.absoluteMode ? (params.Y ?? this.y) : this.y + (params.Y ?? 0);
     const endZ = this.absoluteMode ? (params.Z ?? this.z) : this.z + (params.Z ?? 0);
 
-    // I, J, K are always incremental offsets to arc center
     const i = params.I ?? 0;
     const j = params.J ?? 0;
 
@@ -188,8 +291,6 @@ class GCodeParser {
     let endAngle = Math.atan2(endY - centerY, endX - centerX);
 
     const clockwise = (type === 'cw_arc');
-
-    // Linearize the arc into small line segments
     const arcSegments = 32;
 
     if (clockwise) {
@@ -202,6 +303,7 @@ class GCodeParser {
     const zSpan = endZ - startZ;
 
     let prevX = startX, prevY = startY, prevZ = startZ;
+    let arcDist = 0;
 
     for (let s = 1; s <= arcSegments; s++) {
       const t = s / arcSegments;
@@ -210,17 +312,24 @@ class GCodeParser {
       const ny = centerY + radius * Math.sin(angle);
       const nz = startZ + zSpan * t;
 
+      const segDist = Math.sqrt((nx - prevX) ** 2 + (ny - prevY) ** 2 + (nz - prevZ) ** 2);
+      arcDist += segDist;
+
       this.updateBounds(nx, ny, nz);
 
       this.segments.push({
         type: 'cut',
         from: { x: prevX, y: prevY, z: prevZ },
         to: { x: nx, y: ny, z: nz },
+        tool: this.currentTool,
         line: lineNumber
       });
 
       prevX = nx; prevY = ny; prevZ = nz;
     }
+
+    this.totalCutDist += arcDist;
+    this.feedSegments.push({ dist: arcDist, feed: this.feedRate || 100 });
 
     this.x = endX;
     this.y = endY;
@@ -228,8 +337,41 @@ class GCodeParser {
     this.moveCount++;
   }
 
+  calculateCycleTime() {
+    // Rapid time (inches / IPM * 60 = seconds)
+    const rapidTimeSec = (this.totalRapidDist / this.rapidRate) * 60;
+
+    // Cut time — weighted by actual feed rates
+    let cutTimeSec = 0;
+    for (const seg of this.feedSegments) {
+      const feed = seg.feed > 0 ? seg.feed : 100;
+      cutTimeSec += (seg.dist / feed) * 60;
+    }
+
+    // Tool change time
+    const tcTime = Math.max(0, this.toolChangeCount - 1) * this.toolChangeTime;
+
+    const totalSec = rapidTimeSec + cutTimeSec + tcTime;
+
+    return {
+      rapidTime: rapidTimeSec,
+      cutTime: cutTimeSec,
+      toolChangeTime: tcTime,
+      totalTime: totalSec,
+      totalCutDist: this.totalCutDist,
+      totalRapidDist: this.totalRapidDist,
+      formatted: this.formatTime(totalSec)
+    };
+  }
+
+  formatTime(seconds) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    if (m === 0) return s + 's';
+    return m + 'm ' + s + 's';
+  }
+
   trimParkMoves() {
-    // Compute bounds from cut moves only
     const cutBounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
     for (const seg of this.segments) {
       if (seg.type !== 'rapid') {
@@ -240,8 +382,6 @@ class GCodeParser {
       }
     }
 
-    // Remove trailing rapid moves that go outside the cut envelope
-    // Use a tight margin — park moves on CNC routers are well beyond the sheet
     const margin = Math.max((cutBounds.maxX - cutBounds.minX) * 0.1, 5);
     while (this.segments.length > 0) {
       const last = this.segments[this.segments.length - 1];
@@ -254,7 +394,6 @@ class GCodeParser {
       }
     }
 
-    // Recalculate bounds from remaining segments
     this.bounds = {
       min: { x: Infinity, y: Infinity, z: Infinity },
       max: { x: -Infinity, y: -Infinity, z: -Infinity }

@@ -15,6 +15,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const resetBtn = document.getElementById('reset-view');
   const fileInput = document.getElementById('file-input');
   const statusMsg = document.getElementById('status-msg');
+  const infoPanel = document.getElementById('info-panel');
+  const infoToggle = document.getElementById('info-toggle');
 
   // Playback controls
   const playbackBar = document.getElementById('playback-bar');
@@ -68,6 +70,20 @@ document.addEventListener('DOMContentLoaded', () => {
       statsPanel.classList.remove('hidden');
       playbackBar.classList.remove('hidden');
 
+      // Cycle time in stats bar
+      if (result.cycleTime && result.cycleTime.totalTime > 0) {
+        document.getElementById('stat-cycle').style.display = '';
+        document.getElementById('stat-cycle-time').textContent = result.cycleTime.formatted;
+      }
+
+      // Populate info panel
+      updateInfoPanel(result);
+
+      // Sheet overlay
+      if (result.sheet && result.sheet.width && result.sheet.length) {
+        viewer.showSheet(result.sheet);
+      }
+
       updatePlayButton(false);
       updateProgress(0, result.segments.length);
       showStatus('Loaded: ' + result.segments.length + ' moves', false);
@@ -76,6 +92,72 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (err) {
       showStatus('Parse error: ' + err.message, true);
     }
+  }
+
+  // Info panel toggle
+  infoToggle.addEventListener('click', () => {
+    infoPanel.classList.toggle('hidden');
+  });
+
+  function updateInfoPanel(result) {
+    // Material
+    const matEl = document.getElementById('info-material');
+    if (result.material) {
+      matEl.style.display = '';
+      document.getElementById('info-material-text').textContent = result.material;
+    } else {
+      matEl.style.display = 'none';
+    }
+
+    // Sheet dimensions
+    const sheetEl = document.getElementById('info-sheet');
+    if (result.sheet && result.sheet.width) {
+      sheetEl.style.display = '';
+      let txt = result.sheet.length + '" x ' + result.sheet.width + '"';
+      if (result.sheet.thickness) txt += ' x ' + result.sheet.thickness + '"';
+      document.getElementById('info-sheet-text').textContent = txt;
+    } else {
+      sheetEl.style.display = 'none';
+    }
+
+    // Cycle time breakdown
+    const ct = result.cycleTime;
+    if (ct && ct.totalTime > 0) {
+      const parts = [];
+      if (ct.cutTime > 0) parts.push('Cut: ' + formatSec(ct.cutTime));
+      if (ct.rapidTime > 0) parts.push('Rapid: ' + formatSec(ct.rapidTime));
+      if (ct.toolChangeTime > 0) parts.push('Tool changes: ' + formatSec(ct.toolChangeTime));
+      parts.push('Total: ' + ct.formatted);
+      document.getElementById('info-cycle-detail').textContent = parts.join(' | ');
+    }
+
+    // Tool list
+    const toolList = document.getElementById('info-tool-list');
+    toolList.innerHTML = '';
+    const tools = result.tools || {};
+    const toolNums = Object.keys(tools).sort((a, b) => a - b);
+    if (toolNums.length > 0) {
+      infoToggle.style.display = '';
+      for (const num of toolNums) {
+        const t = tools[num];
+        const div = document.createElement('div');
+        div.className = 'tool-item';
+        let text = 'T' + t.number;
+        if (t.name) text += ' — ' + t.name;
+        if (t.diameter) text += ' (Ø' + t.diameter + ')';
+        if (t.spindleSpeed) text += ' @ ' + t.spindleSpeed.toLocaleString() + ' RPM';
+        div.textContent = text;
+        toolList.appendChild(div);
+      }
+    } else {
+      infoToggle.style.display = 'none';
+    }
+  }
+
+  function formatSec(s) {
+    const m = Math.floor(s / 60);
+    const sec = Math.round(s % 60);
+    return m > 0 ? m + 'm ' + sec + 's' : sec + 's';
   }
 
   // Playback callbacks
