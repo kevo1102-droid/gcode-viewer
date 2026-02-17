@@ -212,8 +212,12 @@ header h1 {
   opacity: 0.5;
 }
 
-.legend-cut::before {
+.legend-shallow::before {
   background: var(--accent);
+}
+
+.legend-deep::before {
+  background: #ff5533;
 }
 
 /* Status message overlay */
@@ -409,6 +413,92 @@ header h1 {
   padding: 2px 8px;
 }
 
+/* G-code panel — overlaid on the 3D viewer */
+.gcode-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 280px;
+  max-height: 100%;
+  background: rgba(15, 15, 26, 0.92);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  z-index: 6;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.gcode-panel.hidden {
+  display: none;
+}
+
+.gcode-line {
+  display: flex;
+  padding: 0 8px;
+  border-left: 3px solid transparent;
+}
+
+.gcode-line.active {
+  background: rgba(68, 221, 136, 0.15);
+  border-left-color: var(--accent);
+}
+
+.gcode-num {
+  color: var(--text-dim);
+  min-width: 36px;
+  text-align: right;
+  margin-right: 8px;
+  user-select: none;
+  opacity: 0.6;
+}
+
+.gcode-text {
+  color: var(--text);
+  white-space: pre;
+}
+
+.gcode-line.active .gcode-text {
+  color: #fff;
+  font-weight: 600;
+}
+
+.toggle-gcode {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+/* Z-depth legend — small vertical bar in viewer */
+.z-legend {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.z-legend.hidden {
+  display: none;
+}
+
+.z-legend-bar {
+  width: 8px;
+  height: 60px;
+  border-radius: 4px;
+  background: linear-gradient(to bottom, #44dd88, #dddd44, #ff8833, #ff5533);
+}
+
+.z-legend-labels {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
 /* Responsive */
 @media (max-width: 480px) {
   header h1 { font-size: 14px; }
@@ -418,4 +508,5 @@ header h1 {
   #playback-bar { padding: 6px 8px; }
   .speed-control { margin-left: 0; }
   #speed-slider { width: 70px; }
+  .gcode-panel { width: 220px; font-size: 10px; }
 }

@@ -2,6 +2,7 @@
  * 3D Viewer
  * Three.js-based renderer for G-code toolpaths.
  * Supports animated playback with speed control.
+ * Z-depth color mapping on cut moves.
  */
 
 class GCodeViewer {
@@ -16,12 +17,13 @@ class GCodeViewer {
     // Animation state
     this.segments = [];
     this.playing = false;
-    this.playbackSpeed = 1; // multiplier: 0.25x to 10x
+    this.playbackSpeed = 1;
     this.currentSegmentIndex = 0;
-    this.segmentProgress = 0; // 0-1 within current segment
+    this.segmentProgress = 0;
     this.lastFrameTime = 0;
     this.onProgress = null; // callback(current, total)
     this.onPlayStateChange = null; // callback(playing)
+    this.onLineChange = null; // callback(lineNumber) for G-code panel
 
     // Tool position marker
     this.toolMarker = null;
@@ -31,8 +33,20 @@ class GCodeViewer {
     this.cutLine = null;
     this.rapidPositions = [];
     this.cutPositions = [];
+    this.cutColors = [];
     this.rapidDrawCount = 0;
     this.cutDrawCount = 0;
+
+    // Z-depth color range
+    this.zMin = 0;
+    this.zMax = 0;
+
+    // Saved perspective camera state for toggling
+    this._savedCamState = null;
+    this._isTopDown = false;
+
+    // Bounds reference for top-down view
+    this._lastBounds = null;
 
     this.init();
   }
@@ -103,7 +117,6 @@ class GCodeViewer {
   }
 
   animateFrame(time) {
-    // Advance playback
     if (this.playing && this.segments.length > 0) {
       const dt = this.lastFrameTime ? (time - this.lastFrameTime) / 1000 : 0;
       this.lastFrameTime = time;
@@ -122,36 +135,39 @@ class GCodeViewer {
       return;
     }
 
-    // Speed: segments per second. Base rate scales with total segment count
-    // so a 500-segment file and a 50000-segment file both take reasonable time
     const baseRate = Math.max(this.segments.length / 30, 10);
     const segmentsToAdvance = baseRate * this.playbackSpeed * dt;
 
     let remaining = segmentsToAdvance;
+    let lastLine = -1;
 
     while (remaining > 0 && this.currentSegmentIndex < this.segments.length) {
       const leftInSegment = 1 - this.segmentProgress;
 
       if (remaining >= leftInSegment) {
-        // Complete this segment
         remaining -= leftInSegment;
         this.segmentProgress = 0;
-        this.addSegmentToScene(this.segments[this.currentSegmentIndex]);
+        const seg = this.segments[this.currentSegmentIndex];
+        this.addSegmentToScene(seg);
+        lastLine = seg.line;
         this.currentSegmentIndex++;
       } else {
-        // Partial segment — update tool marker position
         this.segmentProgress += remaining;
         remaining = 0;
       }
     }
 
-    // Update tool marker
     this.updateToolMarker();
-
-    // Update draw ranges
     this.updateDrawRanges();
 
-    // Progress callback
+    // Line change callback for G-code panel
+    if (lastLine === -1 && this.currentSegmentIndex < this.segments.length) {
+      lastLine = this.segments[this.currentSegmentIndex].line;
+    }
+    if (this.onLineChange && lastLine > 0) {
+      this.onLineChange(lastLine);
+    }
+
     if (this.onProgress) {
       this.onProgress(this.currentSegmentIndex, this.segments.length);
     }
@@ -160,6 +176,29 @@ class GCodeViewer {
       this.toolMarker.visible = false;
       this.pause();
     }
+  }
+
+  // Map a Z value to an RGB color: green (shallow/0) → yellow → red (deep/negative)
+  zDepthColor(z) {
+    const range = this.zMax - this.zMin;
+    if (range === 0) return { r: 0.27, g: 0.87, b: 0.53 }; // default green
+
+    // t=0 at zMax (surface), t=1 at zMin (deepest)
+    const t = Math.max(0, Math.min(1, (this.zMax - z) / range));
+
+    // Green → Yellow → Orange → Red
+    let r, g, b;
+    if (t < 0.33) {
+      const s = t / 0.33;
+      r = 0.27 + s * 0.73; g = 0.87; b = 0.53 - s * 0.53;
+    } else if (t < 0.66) {
+      const s = (t - 0.33) / 0.33;
+      r = 1.0; g = 0.87 - s * 0.37; b = 0;
+    } else {
+      const s = (t - 0.66) / 0.34;
+      r = 1.0; g = 0.5 - s * 0.2; b = 0;
+    }
+    return { r, g, b };
   }
 
   addSegmentToScene(seg) {
@@ -184,9 +223,21 @@ class GCodeViewer {
       this.cutPositions[i + 3] = seg.to.x;
       this.cutPositions[i + 4] = seg.to.y;
       this.cutPositions[i + 5] = seg.to.z;
+
+      // Z-depth vertex colors (color both from and to vertices)
+      const cFrom = this.zDepthColor(seg.from.z);
+      const cTo = this.zDepthColor(seg.to.z);
+      this.cutColors[i]     = cFrom.r;
+      this.cutColors[i + 1] = cFrom.g;
+      this.cutColors[i + 2] = cFrom.b;
+      this.cutColors[i + 3] = cTo.r;
+      this.cutColors[i + 4] = cTo.g;
+      this.cutColors[i + 5] = cTo.b;
+
       this.cutDrawCount++;
       if (this.cutLine) {
         this.cutLine.geometry.attributes.position.needsUpdate = true;
+        this.cutLine.geometry.attributes.color.needsUpdate = true;
         this.cutLine.geometry.setDrawRange(0, this.cutDrawCount * 2);
       }
     }
@@ -214,27 +265,30 @@ class GCodeViewer {
     this.toolMarker.visible = true;
   }
 
-  // Set up segments for animated playback
   loadToolpath(segments, bounds) {
     this.clearToolpath();
     this.segments = segments;
+    this._lastBounds = bounds;
 
     if (!segments.length) return;
 
-    // Count rapids and cuts to pre-allocate buffers
+    // Z range for depth coloring
+    this.zMin = bounds.min.z;
+    this.zMax = bounds.max.z;
+
     let rapidCount = 0, cutCount = 0;
     for (const seg of segments) {
       if (seg.type === 'rapid') rapidCount++;
       else cutCount++;
     }
 
-    // Pre-allocate position arrays (6 floats per segment: from xyz + to xyz)
     this.rapidPositions = new Float32Array(rapidCount * 6);
     this.cutPositions = new Float32Array(cutCount * 6);
+    this.cutColors = new Float32Array(cutCount * 6);
     this.rapidDrawCount = 0;
     this.cutDrawCount = 0;
 
-    // Create line objects with empty draw range
+    // Rapid lines — blue, no vertex colors
     if (rapidCount > 0) {
       const geom = new THREE.BufferGeometry();
       geom.setAttribute('position', new THREE.BufferAttribute(this.rapidPositions, 3));
@@ -248,16 +302,18 @@ class GCodeViewer {
       this.toolpathGroup.add(this.rapidLine);
     }
 
+    // Cut lines — vertex-colored by Z depth
     if (cutCount > 0) {
       const geom = new THREE.BufferGeometry();
       geom.setAttribute('position', new THREE.BufferAttribute(this.cutPositions, 3));
+      geom.setAttribute('color', new THREE.BufferAttribute(this.cutColors, 3));
       geom.setDrawRange(0, 0);
-      const mat = new THREE.LineBasicMaterial({ color: 0x44dd88 });
+      const mat = new THREE.LineBasicMaterial({ vertexColors: true });
       this.cutLine = new THREE.LineSegments(geom, mat);
       this.toolpathGroup.add(this.cutLine);
     }
 
-    // Scale tool marker to workpiece size
+    // Scale tool marker
     const sizeX = bounds.max.x - bounds.min.x;
     const sizeY = bounds.max.y - bounds.min.y;
     const sizeZ = bounds.max.z - bounds.min.z;
@@ -268,13 +324,11 @@ class GCodeViewer {
     this.fitCamera(bounds);
   }
 
-  // Render all segments instantly (no animation)
   renderToolpath(segments, bounds) {
     this.loadToolpath(segments, bounds);
     this.showAll();
   }
 
-  // Jump to showing all segments
   showAll() {
     this.pause();
     for (let i = this.currentSegmentIndex; i < this.segments.length; i++) {
@@ -291,7 +345,6 @@ class GCodeViewer {
 
   play() {
     if (!this.segments.length) return;
-    // If at end, restart
     if (this.currentSegmentIndex >= this.segments.length) {
       this.restart();
     }
@@ -316,26 +369,25 @@ class GCodeViewer {
     this.segmentProgress = 0;
     this.rapidDrawCount = 0;
     this.cutDrawCount = 0;
-    // Zero out position arrays
     this.rapidPositions.fill(0);
     this.cutPositions.fill(0);
+    this.cutColors.fill(0);
     if (this.rapidLine) {
       this.rapidLine.geometry.attributes.position.needsUpdate = true;
       this.rapidLine.geometry.setDrawRange(0, 0);
     }
     if (this.cutLine) {
       this.cutLine.geometry.attributes.position.needsUpdate = true;
+      this.cutLine.geometry.attributes.color.needsUpdate = true;
       this.cutLine.geometry.setDrawRange(0, 0);
     }
     this.toolMarker.visible = false;
     if (this.onProgress) this.onProgress(0, this.segments.length);
   }
 
-  // Scrub to a specific position (0-1)
   scrubTo(fraction) {
     const targetIndex = Math.floor(fraction * this.segments.length);
     if (targetIndex <= this.currentSegmentIndex) {
-      // Need to restart and rebuild up to target
       this.restart();
     }
     for (let i = this.currentSegmentIndex; i < targetIndex && i < this.segments.length; i++) {
@@ -348,10 +400,56 @@ class GCodeViewer {
     if (this.onProgress) {
       this.onProgress(this.currentSegmentIndex, this.segments.length);
     }
+    // Update G-code panel on scrub
+    if (this.onLineChange && targetIndex < this.segments.length) {
+      this.onLineChange(this.segments[targetIndex].line);
+    }
   }
 
   setSpeed(speed) {
     this.playbackSpeed = speed;
+  }
+
+  // Toggle between 3D perspective and top-down orthographic view
+  toggleTopDown() {
+    if (this._isTopDown) {
+      // Restore perspective view
+      if (this._savedCamState) {
+        this.camera.position.copy(this._savedCamState.pos);
+        this.controls.target.copy(this._savedCamState.target);
+        this.camera.up.set(0, 0, 1);
+        this.controls.enableRotate = true;
+        this.controls.update();
+      }
+      this._isTopDown = false;
+      return false;
+    }
+
+    // Save current camera state
+    this._savedCamState = {
+      pos: this.camera.position.clone(),
+      target: this.controls.target.clone()
+    };
+
+    const bounds = this._lastBounds;
+    if (!bounds) return false;
+
+    const cx = (bounds.min.x + bounds.max.x) / 2;
+    const cy = (bounds.min.y + bounds.max.y) / 2;
+    const sizeX = bounds.max.x - bounds.min.x;
+    const sizeY = bounds.max.y - bounds.min.y;
+    const maxDim = Math.max(sizeX, sizeY, 1);
+
+    // Position camera directly above looking down
+    const dist = maxDim * 1.2;
+    this.camera.position.set(cx, cy, dist);
+    this.controls.target.set(cx, cy, 0);
+    this.camera.up.set(0, 1, 0);
+    this.controls.enableRotate = false; // lock to top-down pan/zoom only
+    this.controls.update();
+
+    this._isTopDown = true;
+    return true;
   }
 
   clearToolpath() {
@@ -367,11 +465,14 @@ class GCodeViewer {
     this.cutLine = null;
     this.rapidPositions = [];
     this.cutPositions = [];
+    this.cutColors = [];
     this.rapidDrawCount = 0;
     this.cutDrawCount = 0;
     this.currentSegmentIndex = 0;
     this.segmentProgress = 0;
     this.toolMarker.visible = false;
+    this._isTopDown = false;
+    this._savedCamState = null;
   }
 
   fitCamera(bounds) {
@@ -399,15 +500,17 @@ class GCodeViewer {
     const dist = maxDim * 1.5;
     this.camera.position.set(centerX + dist * 0.6, centerY - dist * 0.6, centerZ + dist * 0.8);
     this.controls.target.set(centerX, centerY, centerZ);
+    this.controls.enableRotate = true;
     this.controls.update();
 
     this.camera.near = dist * 0.001;
     this.camera.far = dist * 100;
     this.camera.updateProjectionMatrix();
+
+    this._isTopDown = false;
   }
 
   showSheet(sheet) {
-    // Clear previous sheet outline
     while (this.sheetGroup.children.length) {
       const child = this.sheetGroup.children[0];
       child.geometry?.dispose();
@@ -417,10 +520,9 @@ class GCodeViewer {
 
     if (!sheet || !sheet.width || !sheet.length) return;
 
-    const w = sheet.length; // X axis (length along table)
-    const h = sheet.width;  // Y axis
+    const w = sheet.length;
+    const h = sheet.width;
 
-    // Translucent filled plane
     const planeGeom = new THREE.PlaneGeometry(w, h);
     const planeMat = new THREE.MeshBasicMaterial({
       color: 0x4488ff,
@@ -433,7 +535,6 @@ class GCodeViewer {
     plane.position.set(w / 2, h / 2, 0);
     this.sheetGroup.add(plane);
 
-    // Outline border
     const pts = [
       new THREE.Vector3(0, 0, 0),
       new THREE.Vector3(w, 0, 0),
@@ -450,13 +551,10 @@ class GCodeViewer {
     const outline = new THREE.Line(lineGeom, lineMat);
     this.sheetGroup.add(outline);
 
-    // Dimension labels at edges (small tick marks)
     const tickSize = Math.max(w, h) * 0.015;
     const tickPts = [
-      // X-axis ticks at corners
       new THREE.Vector3(0, -tickSize, 0), new THREE.Vector3(0, tickSize, 0),
       new THREE.Vector3(w, -tickSize, 0), new THREE.Vector3(w, tickSize, 0),
-      // Y-axis ticks at corners
       new THREE.Vector3(-tickSize, 0, 0), new THREE.Vector3(tickSize, 0, 0),
       new THREE.Vector3(-tickSize, h, 0), new THREE.Vector3(tickSize, h, 0)
     ];

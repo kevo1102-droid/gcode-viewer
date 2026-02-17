@@ -1,6 +1,6 @@
 /**
  * App Shell
- * File handling, UI logic, playback controls.
+ * File handling, UI logic, playback controls, G-code panel.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -17,6 +17,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusMsg = document.getElementById('status-msg');
   const infoPanel = document.getElementById('info-panel');
   const infoToggle = document.getElementById('info-toggle');
+  const topDownBtn = document.getElementById('top-down-btn');
+  const gcodeToggle = document.getElementById('gcode-toggle');
+  const gcodePanel = document.getElementById('gcode-panel');
+  const gcodeLinesEl = document.getElementById('gcode-lines');
+  const zLegend = document.getElementById('z-legend');
 
   // Playback controls
   const playbackBar = document.getElementById('playback-bar');
@@ -28,6 +33,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const progressBar = document.getElementById('progress-bar');
   const progressFill = document.getElementById('progress-fill');
   const progressText = document.getElementById('progress-text');
+
+  // Raw G-code lines for the code panel
+  let gcodeLines = [];
+  let gcodeVisible = false;
 
   function showStatus(msg, isError) {
     statusMsg.textContent = msg;
@@ -54,7 +63,12 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      // Load and immediately show full toolpath — user can restart + play to animate
+      // Store raw lines for G-code panel
+      gcodeLines = text.split('\n');
+      gcodeToggle.style.display = '';
+      buildGcodePanel();
+
+      // Load and immediately show full toolpath
       viewer.renderToolpath(result.segments, result.bounds);
 
       fileName.textContent = name || 'Pasted G-code';
@@ -84,6 +98,16 @@ document.addEventListener('DOMContentLoaded', () => {
         viewer.showSheet(result.sheet);
       }
 
+      // Z-depth legend
+      const zRange = b.max.z - b.min.z;
+      if (zRange > 0.001) {
+        document.getElementById('z-legend-max').textContent = b.max.z.toFixed(3) + '"';
+        document.getElementById('z-legend-min').textContent = b.min.z.toFixed(3) + '"';
+        zLegend.classList.remove('hidden');
+      } else {
+        zLegend.classList.add('hidden');
+      }
+
       updatePlayButton(false);
       updateProgress(0, result.segments.length);
       showStatus('Loaded: ' + result.segments.length + ' moves', false);
@@ -94,13 +118,62 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Info panel toggle
+  // --- G-code panel ---
+  function buildGcodePanel() {
+    gcodeLinesEl.innerHTML = '';
+    for (let i = 0; i < gcodeLines.length; i++) {
+      const div = document.createElement('div');
+      div.className = 'gcode-line';
+      div.dataset.line = i + 1;
+      const num = document.createElement('span');
+      num.className = 'gcode-num';
+      num.textContent = (i + 1);
+      const code = document.createElement('span');
+      code.className = 'gcode-text';
+      code.textContent = gcodeLines[i];
+      div.appendChild(num);
+      div.appendChild(code);
+      gcodeLinesEl.appendChild(div);
+    }
+  }
+
+  let lastHighlightedLine = -1;
+  function highlightGcodeLine(lineNum) {
+    if (lineNum === lastHighlightedLine) return;
+    // Remove previous highlight
+    if (lastHighlightedLine > 0) {
+      const prev = gcodeLinesEl.querySelector('.gcode-line.active');
+      if (prev) prev.classList.remove('active');
+    }
+    // Add new highlight
+    const el = gcodeLinesEl.querySelector('.gcode-line[data-line="' + lineNum + '"]');
+    if (el) {
+      el.classList.add('active');
+      // Scroll into view within the panel
+      el.scrollIntoView({ block: 'center', behavior: 'auto' });
+    }
+    lastHighlightedLine = lineNum;
+  }
+
+  gcodeToggle.addEventListener('click', () => {
+    gcodeVisible = !gcodeVisible;
+    gcodePanel.classList.toggle('hidden', !gcodeVisible);
+    gcodeToggle.classList.toggle('btn-primary', gcodeVisible);
+  });
+
+  // --- Top-down view ---
+  topDownBtn.addEventListener('click', () => {
+    const isTopDown = viewer.toggleTopDown();
+    topDownBtn.textContent = isTopDown ? '3D View' : 'Top View';
+    topDownBtn.classList.toggle('btn-primary', isTopDown);
+  });
+
+  // --- Info panel toggle ---
   infoToggle.addEventListener('click', () => {
     infoPanel.classList.toggle('hidden');
   });
 
   function updateInfoPanel(result) {
-    // Material
     const matEl = document.getElementById('info-material');
     if (result.material) {
       matEl.style.display = '';
@@ -109,7 +182,6 @@ document.addEventListener('DOMContentLoaded', () => {
       matEl.style.display = 'none';
     }
 
-    // Sheet dimensions
     const sheetEl = document.getElementById('info-sheet');
     if (result.sheet && result.sheet.width) {
       sheetEl.style.display = '';
@@ -120,7 +192,6 @@ document.addEventListener('DOMContentLoaded', () => {
       sheetEl.style.display = 'none';
     }
 
-    // Cycle time breakdown
     const ct = result.cycleTime;
     if (ct && ct.totalTime > 0) {
       const parts = [];
@@ -131,7 +202,6 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('info-cycle-detail').textContent = parts.join(' | ');
     }
 
-    // Tool list
     const toolList = document.getElementById('info-tool-list');
     toolList.innerHTML = '';
     const tools = result.tools || {};
@@ -163,6 +233,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Playback callbacks
   viewer.onProgress = (current, total) => updateProgress(current, total);
   viewer.onPlayStateChange = (playing) => updatePlayButton(playing);
+  viewer.onLineChange = (lineNum) => {
+    if (gcodeVisible) highlightGcodeLine(lineNum);
+  };
 
   function updatePlayButton(playing) {
     playBtn.textContent = playing ? 'Pause' : 'Play';
@@ -204,7 +277,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('mouseup', () => { scrubbing = false; });
   document.addEventListener('touchend', () => { scrubbing = false; });
 
-  // File input — label triggers the native picker directly
+  // File input
   fileInput.addEventListener('change', () => {
     const file = fileInput.files[0];
     if (!file) return;
@@ -213,7 +286,6 @@ document.addEventListener('DOMContentLoaded', () => {
     reader.onload = () => loadGCode(reader.result, file.name);
     reader.onerror = () => showStatus('Error reading file: ' + reader.error.message, true);
     reader.readAsText(file);
-    // Reset so same file can be re-selected
     fileInput.value = '';
   });
 
@@ -240,7 +312,11 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Reset view
-  resetBtn.addEventListener('click', () => viewer.resetView());
+  resetBtn.addEventListener('click', () => {
+    viewer.resetView();
+    topDownBtn.textContent = 'Top View';
+    topDownBtn.classList.remove('btn-primary');
+  });
 
   // PWA file handling
   if ('launchQueue' in window) {

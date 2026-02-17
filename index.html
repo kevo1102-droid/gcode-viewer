@@ -14,7 +14,8 @@
       <h1>G-Code 3D Viewer</h1>
       <div class="legend">
         <span class="legend-item legend-rapid">Rapid</span>
-        <span class="legend-item legend-cut">Cut</span>
+        <span class="legend-item legend-shallow">Shallow</span>
+        <span class="legend-item legend-deep">Deep</span>
       </div>
     </header>
 
@@ -22,6 +23,8 @@
       <input type="file" id="file-input" class="file-input-btn">
       <button class="btn toggle-paste" onclick="document.querySelector('.paste-section').classList.toggle('collapsed')">Paste</button>
       <button class="btn" id="reset-view">Reset View</button>
+      <button class="btn" id="top-down-btn">Top View</button>
+      <button class="btn toggle-gcode" id="gcode-toggle" style="display:none">Code</button>
     </div>
 
     <div class="paste-section collapsed">
@@ -34,6 +37,18 @@
     <div id="viewer-container">
       <div id="drop-zone"></div>
       <div id="status-msg" class="status-msg"></div>
+      <!-- Live G-code panel overlay -->
+      <div id="gcode-panel" class="gcode-panel hidden">
+        <div id="gcode-lines"></div>
+      </div>
+      <!-- Z-depth legend overlay -->
+      <div id="z-legend" class="z-legend hidden">
+        <div class="z-legend-bar"></div>
+        <div class="z-legend-labels">
+          <span id="z-legend-max">0"</span>
+          <span id="z-legend-min">0"</span>
+        </div>
+      </div>
     </div>
 
     <!-- Playback controls -->
@@ -91,9 +106,9 @@
   <script src="lib/OrbitControls.js"></script>
 
   <!-- App modules -->
-  <script src="js/gcode-parser.js?v=6"></script>
-  <script src="js/viewer.js?v=6"></script>
-  <script src="js/app.js?v=6"></script>
+  <script src="js/gcode-parser.js?v=7"></script>
+  <script src="js/viewer.js?v=7"></script>
+  <script src="js/app.js?v=7"></script>
 
   <script>
     if ('serviceWorker' in navigator) {
